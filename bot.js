@@ -23,8 +23,13 @@ const CONFIG = {
 
 let bot;
 let movementInterval = null;
+let reconnectTimeout = null;
 
 function createBot() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
   console.log(`[Connection] Connecting to ${CONFIG.host}:${CONFIG.port}...`);
   
   bot = mineflayer.createBot(CONFIG);
@@ -50,7 +55,9 @@ function createBot() {
     console.log(`[End] Connection closed. Attempting auto-reconnect in 30 seconds...`);
     clearInterval(movementInterval);
     movementInterval = null;
-    setTimeout(createBot, 30000);
+    if (!reconnectTimeout) {
+      reconnectTimeout = setTimeout(createBot, 30000);
+    }
   });
 }
 
