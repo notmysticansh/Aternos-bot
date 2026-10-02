@@ -10,12 +10,13 @@ app.use(express.json());
 const customResolver = new Resolver();
 customResolver.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
 
+// Active Configuration State
 let currentConfig = {
-  mode: 'auto',
+  mode: 'auto', // 'auto' (Aternos resolver) or 'manual'
   host: 'Mystic_Ansh.aternos.me',
   manualIp: '',
   port: 61853,
-  username: 'ServerKeeper_247',
+  username: 'ServerKeeper',
   version: '1.20.2'
 };
 
@@ -23,7 +24,6 @@ let bot = null;
 let movementInterval = null;
 let reconnectTimeout = null;
 let isManualStop = false;
-let isReconnecting = false;
 let botStatus = 'OFFLINE';
 let liveLogs = [];
 
@@ -63,39 +63,19 @@ async function resolveServerDetails(domain) {
   return { host: '185.107.194.11', port: 61853 };
 }
 
-// Force cleanup helper to prevent duplicate UUIDs / ghost sockets
-function cleanBotResources() {
-  if (movementInterval) {
-    clearInterval(movementInterval);
-    movementInterval = null;
-  }
-  if (bot) {
-    try {
-      bot.removeAllListeners();
-      if (bot._client) {
-        bot._client.removeAllListeners();
-        bot._client.end();
-      }
-    } catch (e) {}
-    bot = null;
-  }
-}
-
 // Bot Connection Engine
 async function startBotProcess() {
-  if (botStatus === 'ONLINE' || botStatus === 'CONNECTING') {
-    addLog('Bot instance is already active or connecting.');
+  if (bot) {
+    addLog('Bot instance is already active.');
     return;
   }
 
   isManualStop = false;
-  isReconnecting = false;
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
 
-  cleanBotResources();
   botStatus = 'CONNECTING';
 
   let targetHost = currentConfig.host;
@@ -117,19 +97,18 @@ async function startBotProcess() {
     username: currentConfig.username,
     version: currentConfig.version || '1.20.2',
     auth: 'offline',
-    connectTimeout: 45000,
-    checkTimeoutInterval: 90000,  // Prevents aggressive client timeout drops
+    connectTimeout: 30000,
+    checkTimeoutInterval: 60000,
     keepAlive: true
   };
 
-  addLog(`Connecting to ${botOptions.host}:${botOptions.port} as ${botOptions.username}...`);
-
+  addLog(`Connecting to ${botOptions.host}:${botOptions.port} as ${botOptions.username} (v${botOptions.version})...`);
+  
   try {
     bot = mineflayer.createBot(botOptions);
   } catch (err) {
     addLog(`Initialization Error: ${err.message}`);
     botStatus = 'OFFLINE';
-    triggerAutoReconnect();
     return;
   }
 
@@ -142,7 +121,7 @@ async function startBotProcess() {
   });
 
   bot._client.on('error', (err) => {
-    addLog(`Client Socket Error: ${err.message}`);
+    addLog(`Client Error: ${err.message}`);
   });
 
   bot.on('login', () => {
@@ -156,51 +135,52 @@ async function startBotProcess() {
   });
 
   bot.on('kicked', (reason) => {
-    addLog(`Disconnected/Kicked: ${typeof reason === 'object' ? JSON.stringify(reason) : reason}`);
+    addLog(`Disconnected from server. Reason: ${typeof reason === 'object' ? JSON.stringify(reason) : reason}`);
   });
 
   bot.on('error', (err) => {
-    addLog(`Bot Error: ${err.message}`);
+    addLog(`Error encountered: ${err.message}`);
   });
 
   bot.on('end', () => {
     botStatus = 'OFFLINE';
-    cleanBotResources();
+    clearInterval(movementInterval);
+    movementInterval = null;
+    bot = null;
 
     if (isManualStop) {
-      addLog('Bot stopped manually via dashboard. Standing by.');
+      addLog('Bot stopped manually by User. Standing by.');
     } else {
-      addLog('Connection lost. Rapid auto-reconnect in 8 seconds...');
-      triggerAutoReconnect();
+      addLog('Connection closed unexpectedly. Reconnecting in 30s...');
+      if (!reconnectTimeout) {
+        reconnectTimeout = setTimeout(startBotProcess, 30000);
+      }
     }
   });
-}
-
-function triggerAutoReconnect() {
-  if (isManualStop || isReconnecting) return;
-  isReconnecting = true;
-  if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-  // Fast 8-second reconnect (Aternos ke 180s shutdown timer se bahut pehle join karega)
-  reconnectTimeout = setTimeout(() => {
-    isReconnecting = false;
-    startBotProcess();
-  }, 8000);
 }
 
 // Bot Stop Routine
 function stopBotProcess() {
   isManualStop = true;
-  isReconnecting = false;
-
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
 
-  botStatus = 'OFFLINE';
-  cleanBotResources();
-  addLog('Terminated bot session by user request.');
+  if (movementInterval) {
+    clearInterval(movementInterval);
+    movementInterval = null;
+  }
+
+  if (bot) {
+    addLog('Terminating bot session by user request...');
+    bot.quit();
+    bot = null;
+    botStatus = 'OFFLINE';
+  } else {
+    botStatus = 'OFFLINE';
+    addLog('Bot was already inactive.');
+  }
 }
 
 // Anti-AFK Engine (Random Walking + Jump + Yaw/Pitch)
@@ -254,12 +234,15 @@ app.post('/api/action', (req, res) => {
   } else if (action === 'stop') {
     stopBotProcess();
     res.json({ success: true, message: 'Bot stopped successfully.' });
+  } else if (action === 'save_config') {
+    addLog(`Configuration updated: ${JSON.stringify(currentConfig)}`);
+    res.json({ success: true, message: 'Config saved.' });
   } else {
     res.status(400).json({ error: 'Invalid action' });
   }
 });
 
-// High-End Futuristic Glassmorphism GUI Dashboard
+// --- High-End Futuristic Glassmorphism GUI Dashboard ---
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -286,7 +269,9 @@ app.get('/', (req, res) => {
       --text: #f0f4f8;
       --text-dim: #7f8fa6;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       background: radial-gradient(circle at 50% 0%, #151d30 0%, var(--bg) 80%);
       color: var(--text);
@@ -299,6 +284,7 @@ app.get('/', (req, res) => {
       padding: 24px 16px;
       overflow-x: hidden;
     }
+
     .ambient-glow {
       position: absolute;
       top: -100px;
@@ -311,6 +297,7 @@ app.get('/', (req, res) => {
       z-index: 0;
       pointer-events: none;
     }
+
     .container {
       position: relative;
       z-index: 1;
@@ -324,6 +311,7 @@ app.get('/', (req, res) => {
       padding: 32px 28px;
       box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.1);
     }
+
     header {
       display: flex;
       justify-content: space-between;
@@ -332,6 +320,7 @@ app.get('/', (req, res) => {
       border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       padding-bottom: 16px;
     }
+
     .title-group h1 {
       font-size: 22px;
       font-weight: 800;
@@ -341,12 +330,14 @@ app.get('/', (req, res) => {
       -webkit-text-fill-color: transparent;
       text-transform: uppercase;
     }
+
     .title-group p {
       font-size: 13px;
       color: var(--text-dim);
       font-family: 'JetBrains Mono', monospace;
       margin-top: 4px;
     }
+
     .status-badge {
       display: inline-flex;
       align-items: center;
@@ -361,22 +352,39 @@ app.get('/', (req, res) => {
       border: 1px solid rgba(255, 255, 255, 0.1);
       transition: all 0.3s ease;
     }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; position: relative; }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      position: relative;
+    }
+
     .status-dot::after {
-      content: ''; position: absolute; inset: -4px; border-radius: 50%; opacity: 0.7;
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      opacity: 0.7;
       animation: pulse 2s infinite ease-in-out;
     }
+
     @keyframes pulse {
       0% { transform: scale(0.9); opacity: 0.8; }
       50% { transform: scale(1.6); opacity: 0; }
       100% { transform: scale(0.9); opacity: 0; }
     }
+
     .status-online { background: rgba(0, 255, 136, 0.1); color: var(--green); border-color: rgba(0, 255, 136, 0.3); }
     .status-online .status-dot, .status-online .status-dot::after { background: var(--green); }
+
     .status-offline { background: rgba(255, 51, 102, 0.1); color: var(--red); border-color: rgba(255, 51, 102, 0.3); }
     .status-offline .status-dot, .status-offline .status-dot::after { background: var(--red); }
+
     .status-connecting { background: rgba(255, 184, 0, 0.1); color: var(--yellow); border-color: rgba(255, 184, 0, 0.3); }
     .status-connecting .status-dot, .status-connecting .status-dot::after { background: var(--yellow); }
+
+    /* Configuration Panel */
     .config-panel {
       background: rgba(10, 14, 24, 0.6);
       border: 1px solid rgba(255, 255, 255, 0.05);
@@ -384,6 +392,7 @@ app.get('/', (req, res) => {
       padding: 18px;
       margin-bottom: 22px;
     }
+
     .config-header {
       font-size: 12px;
       font-weight: 700;
@@ -395,6 +404,7 @@ app.get('/', (req, res) => {
       justify-content: space-between;
       align-items: center;
     }
+
     .mode-switch {
       display: flex;
       background: rgba(0, 0, 0, 0.4);
@@ -402,6 +412,7 @@ app.get('/', (req, res) => {
       border-radius: 10px;
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
+
     .mode-btn {
       background: transparent;
       border: none;
@@ -414,11 +425,39 @@ app.get('/', (req, res) => {
       cursor: pointer;
       transition: all 0.2s;
     }
-    .mode-btn.active { background: var(--cyan); color: #07090e; font-weight: 700; }
-    .inputs-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 12px; }
-    .inputs-grid-secondary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .input-box { display: flex; flex-direction: column; gap: 6px; }
-    .input-box label { font-size: 11px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; text-transform: uppercase; }
+
+    .mode-btn.active {
+      background: var(--cyan);
+      color: #07090e;
+      font-weight: 700;
+    }
+
+    .inputs-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .inputs-grid-secondary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .input-box {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .input-box label {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+    }
+
     .input-box input {
       background: rgba(0, 0, 0, 0.5);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -430,47 +469,116 @@ app.get('/', (req, res) => {
       outline: none;
       transition: border-color 0.2s;
     }
-    .input-box input:focus { border-color: var(--cyan); box-shadow: 0 0 10px rgba(0, 240, 255, 0.2); }
-    .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
+
+    .input-box input:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+    }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
     .btn {
-      position: relative; border: none; padding: 16px 20px; border-radius: 14px;
-      font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 700;
-      letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 10px;
+      position: relative;
+      border: none;
+      padding: 16px 20px;
+      border-radius: 14px;
+      font-family: 'Outfit', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     }
-    .btn-start { background: linear-gradient(135deg, #00ff88, #00b359); color: #05160d; }
-    .btn-start:hover { box-shadow: 0 0 25px var(--green-glow); transform: translateY(-2px); }
-    .btn-stop { background: linear-gradient(135deg, #ff3366, #b8143d); color: #ffffff; }
-    .btn-stop:hover { box-shadow: 0 0 25px var(--red-glow); transform: translateY(-2px); }
+
+    .btn-start {
+      background: linear-gradient(135deg, #00ff88, #00b359);
+      color: #05160d;
+    }
+
+    .btn-start:hover {
+      box-shadow: 0 0 25px var(--green-glow);
+      transform: translateY(-2px);
+    }
+
+    .btn-stop {
+      background: linear-gradient(135deg, #ff3366, #b8143d);
+      color: #ffffff;
+    }
+
+    .btn-stop:hover {
+      box-shadow: 0 0 25px var(--red-glow);
+      transform: translateY(-2px);
+    }
+
     .btn:active { transform: scale(0.98); }
     .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; box-shadow: none; }
+
     .terminal-section {
       background: rgba(5, 7, 12, 0.75);
       border: 1px solid rgba(255, 255, 255, 0.05);
-      border-radius: 16px; padding: 16px;
+      border-radius: 16px;
+      padding: 16px;
     }
+
     .terminal-header {
-      display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      font-size: 11px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace;
-      text-transform: uppercase; letter-spacing: 1px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
+
     .terminal-window {
-      height: 190px; overflow-y: auto; font-family: 'JetBrains Mono', monospace;
-      font-size: 12px; line-height: 1.6; color: #b0c4de; padding-right: 6px;
-      display: flex; flex-direction: column-reverse;
+      height: 190px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #b0c4de;
+      padding-right: 6px;
+      display: flex;
+      flex-direction: column-reverse;
     }
+
     .terminal-window::-webkit-scrollbar { width: 5px; }
     .terminal-window::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-    .log-line { margin-bottom: 4px; word-break: break-word; }
+
+    .log-line {
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+
     .log-line:first-child { color: var(--cyan); }
-    footer { margin-top: 18px; text-align: center; font-size: 11px; color: rgba(255, 255, 255, 0.25); font-family: 'JetBrains Mono', monospace; }
+
+    footer {
+      margin-top: 18px;
+      text-align: center;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.25);
+      font-family: 'JetBrains Mono', monospace;
+    }
   </style>
 </head>
 <body>
   <div class="ambient-glow"></div>
+
   <div class="container">
     <header>
       <div class="title-group">
@@ -483,6 +591,7 @@ app.get('/', (req, res) => {
       </div>
     </header>
 
+    <!-- Interactive Config Box -->
     <div class="config-panel">
       <div class="config-header">
         <span>Target Configuration</span>
@@ -491,28 +600,31 @@ app.get('/', (req, res) => {
           <button id="modeManual" class="mode-btn" onclick="setMode('manual')">MANUAL IP/PORT</button>
         </div>
       </div>
+
       <div class="inputs-grid">
         <div class="input-box">
           <label id="lblServer">Server Domain / IP</label>
-          <input type="text" id="cfgServer" value="Mystic_Ansh.aternos.me">
+          <input type="text" id="cfgServer" value="Mystic_Ansh.aternos.me" placeholder="e.g. 185.107.194.11 or myserver.net">
         </div>
         <div class="input-box">
           <label>Port</label>
-          <input type="number" id="cfgPort" value="61853">
+          <input type="number" id="cfgPort" value="61853" placeholder="25565">
         </div>
       </div>
+
       <div class="inputs-grid-secondary">
         <div class="input-box">
           <label>Bot Name</label>
-          <input type="text" id="cfgUsername" value="ServerKeeper_247">
+          <input type="text" id="cfgUsername" value="ServerKeeper_247" placeholder="ServerKeeper_247">
         </div>
         <div class="input-box">
           <label>Protocol Version</label>
-          <input type="text" id="cfgVersion" value="1.20.2">
+          <input type="text" id="cfgVersion" value="1.20.2" placeholder="1.20.2 / 1.20.4 / 1.21.1">
         </div>
       </div>
     </div>
 
+    <!-- Controls -->
     <div class="control-grid">
       <button id="btnStart" class="btn btn-start" onclick="sendAction('start')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -524,33 +636,40 @@ app.get('/', (req, res) => {
       </button>
     </div>
 
+    <!-- Telemetry Logs -->
     <div class="terminal-section">
       <div class="terminal-header">
         <span>Telemetry Live Feed</span>
-        <span>RAPID RECONNECT (8s)</span>
+        <span>AUTO-SYNC (2s)</span>
       </div>
       <div id="terminal" class="terminal-window">
-        <div class="log-line">Ready. Engine tuned for zero-timeout persistence.</div>
+        <div class="log-line">Ready. Configure target and click Start Keeper.</div>
       </div>
     </div>
-    <footer>RAPID ENGINE // PERSISTENCE TUNED</footer>
+
+    <footer>CLOUD & LOCAL COMPATIBLE // BUILT FOR HIGH-STABILITY</footer>
   </div>
 
   <script>
     let currentMode = 'auto';
+
     function setMode(mode) {
       currentMode = mode;
       document.getElementById('modeAuto').className = 'mode-btn' + (mode === 'auto' ? ' active' : '');
       document.getElementById('modeManual').className = 'mode-btn' + (mode === 'manual' ? ' active' : '');
+
       const lbl = document.getElementById('lblServer');
       const srvInput = document.getElementById('cfgServer');
       const portInput = document.getElementById('cfgPort');
+
       if (mode === 'auto') {
         lbl.textContent = 'Aternos Domain (SRV Auto)';
+        srvInput.placeholder = 'Mystic_Ansh.aternos.me';
         portInput.disabled = true;
         portInput.style.opacity = '0.5';
       } else {
         lbl.textContent = 'Direct IP / Custom Host';
+        srvInput.placeholder = '185.107.194.11 or play.hypixel.net';
         portInput.disabled = false;
         portInput.style.opacity = '1';
       }
@@ -560,6 +679,7 @@ app.get('/', (req, res) => {
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
+
         const badge = document.getElementById('statusBadge');
         const text = document.getElementById('statusText');
         const btnStart = document.getElementById('btnStart');
@@ -567,12 +687,15 @@ app.get('/', (req, res) => {
 
         text.textContent = data.status;
         badge.className = 'status-badge status-' + data.status.toLowerCase();
+
         btnStart.disabled = (data.status === 'ONLINE' || data.status === 'CONNECTING');
         btnStop.disabled = (data.status === 'OFFLINE');
 
         const terminal = document.getElementById('terminal');
         terminal.innerHTML = data.logs.map(log => \`<div class="log-line">\${log}</div>\`).join('');
-      } catch (err) {}
+      } catch (err) {
+        console.error('Fetch error:', err);
+      }
     }
 
     async function sendAction(action) {
@@ -597,6 +720,7 @@ app.get('/', (req, res) => {
       }
     }
 
+    // Initialize default mode
     setMode('auto');
     setInterval(updateDashboard, 2000);
     updateDashboard();
