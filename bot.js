@@ -15,7 +15,7 @@ app.listen(PORT, () => {
 
 // Server Configuration
 const CONFIG = {
-  host: 'Mystic_Ansh.aternos.me',
+  host: 'loosejaw.aternos.host',
   port: 61853,
   username: 'ServerKeeper_247',
   version: false // Auto version detection
