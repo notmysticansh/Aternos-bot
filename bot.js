@@ -18,7 +18,7 @@ const CONFIG = {
   host: 'loosejaw.aternos.host',
   port: 61853,
   username: 'ServerKeeper_247',
-  version: false // Auto version detection
+  version: 1.21 // Auto version detection
 };
 
 let bot;
