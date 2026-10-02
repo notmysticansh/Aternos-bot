@@ -18,7 +18,8 @@ const CONFIG = {
   host: 'loosejaw.aternos.host',
   port: 61853,
   username: 'ServerKeeper_247',
-  version: 1.21 // Auto version detection
+  version: '1.21',   // Quotes ke andar zaroori hai
+  auth: 'offline'     // Cracked / Aternos offline mode bypass
 };
 
 let bot;
