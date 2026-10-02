@@ -10,11 +10,10 @@ app.use(express.json());
 const customResolver = new Resolver();
 customResolver.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
 
-// Active Configuration State
 let currentConfig = {
   mode: 'auto',
   host: 'Mystic_Ansh.aternos.me',
-  manualIp: '',
+  manualIp: 'ladyfish.aternos.host',
   port: 61853,
   username: 'ServerKeeper_247',
   version: '1.20.2'
@@ -35,7 +34,7 @@ function addLog(msg) {
   console.log(entry);
 }
 
-// Dynamic SRV & IPv4 Resolver (Tumhara original working resolver)
+// Render-Safe Resolver: resolve4 proxy trap bypass
 async function resolveServerDetails(domain) {
   try {
     addLog(`Resolving SRV records for ${domain}...`);
@@ -45,22 +44,14 @@ async function resolveServerDetails(domain) {
       const dynHost = srvRecords[0].name;
       const dynPort = srvRecords[0].port;
       addLog(`Found Dyn Target: ${dynHost}:${dynPort}`);
-
-      try {
-        const ipRecords = await customResolver.resolve4(dynHost);
-        if (ipRecords && ipRecords.length > 0) {
-          addLog(`Resolved Clean IPv4: ${ipRecords[0]}`);
-          return { host: ipRecords[0], port: dynPort };
-        }
-      } catch (ipErr) {
-        addLog(`IPv4 lookup fallback to domain: ${ipErr.message}`);
-        return { host: dynHost, port: dynPort };
-      }
+      
+      // Dynamic hostname direct use hoga, proxy IP par convert nahi hoga
+      return { host: dynHost, port: dynPort };
     }
   } catch (err) {
     addLog(`DNS resolve fallback: ${err.message}`);
   }
-  return { host: '185.107.194.11', port: 61853 };
+  return { host: 'ladyfish.aternos.host', port: 61853 };
 }
 
 // Bot Connection Engine
@@ -100,8 +91,8 @@ async function startBotProcess() {
     username: currentConfig.username,
     version: currentConfig.version || '1.20.2',
     auth: 'offline',
-    connectTimeout: 30000,
-    checkTimeoutInterval: 90000, // Timeout sensitivity loose rakhi hai taaki random drop na ho
+    connectTimeout: 45000,
+    checkTimeoutInterval: 90000,
     keepAlive: true
   };
 
@@ -152,7 +143,6 @@ async function startBotProcess() {
       movementInterval = null;
     }
     
-    // Purane socket listeners clean up taaki duplicate connection create na ho
     if (bot) {
       try {
         bot.removeAllListeners();
@@ -164,7 +154,6 @@ async function startBotProcess() {
     if (isManualStop) {
       addLog('Bot stopped manually by User. Standing by.');
     } else {
-      // 30s se ghata kar 10s kiya taaki Aternos shutdown hone se pehle turant wapas ghus jaye
       addLog('Connection lost. Fast auto-reconnect in 10s...');
       if (!reconnectTimeout) {
         reconnectTimeout = setTimeout(startBotProcess, 10000);
@@ -201,7 +190,7 @@ function stopBotProcess() {
   }
 }
 
-// Anti-AFK Engine (Exact same random loop)
+// Anti-AFK Movement
 function startMovementLoop() {
   if (movementInterval) clearInterval(movementInterval);
   const controls = ['forward', 'back', 'left', 'right'];
@@ -531,10 +520,10 @@ app.get('/', (req, res) => {
         <span>FAST RECONNECT (10s)</span>
       </div>
       <div id="terminal" class="terminal-window">
-        <div class="log-line">Ready. Engine tuned for zero-timeout persistence.</div>
+        <div class="log-line">Ready. Render Proxy Bypass Active.</div>
       </div>
     </div>
-    <footer>RAPID ENGINE // PERSISTENCE TUNED</footer>
+    <footer>RENDER OPTIMIZED // PERSISTENCE TUNED</footer>
   </div>
 
   <script>
@@ -548,10 +537,12 @@ app.get('/', (req, res) => {
       const portInput = document.getElementById('cfgPort');
       if (mode === 'auto') {
         lbl.textContent = 'Aternos Domain (SRV Auto)';
+        srvInput.value = 'Mystic_Ansh.aternos.me';
         portInput.disabled = true;
         portInput.style.opacity = '0.5';
       } else {
         lbl.textContent = 'Direct IP / Custom Host';
+        srvInput.value = 'ladyfish.aternos.host';
         portInput.disabled = false;
         portInput.style.opacity = '1';
       }
